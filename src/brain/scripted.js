@@ -4,8 +4,8 @@
 // Run the evals with --claude to grade the real model.
 
 const EMAIL = /[\w.+-]+@[\w-]+\.[\w.]+/;
-const NAME = /(?:sou (?:o |a )?|me chamo |aqui (?:é|e) (?:o |a )?|my name is |i'?m |this is )([A-ZÀ-Ú][\p{L}]+)/iu;
-const COMPANY = /(?:da empresa |na empresa |empresa |trabalho na |trabalho no |sou da |sou do |from |at |company is )([A-Z0-9][\w&.-]*(?: [A-Z][\w&.-]*)?)/u;
+const NAME = /(?:sou (?:o |a )?|me chamo |aqui (?:é|e) (?:o |a )?|my name is |i'?m |this is )(?!(?:d[aoe]|from|at|with)\s)([\p{L}]+)/iu;
+const COMPANY = /(?:da empresa |na empresa |trabalho na |trabalho no |sou da |sou do |i'?m from |from |at |company is )([\p{L}0-9][\w&.-]*)/iu;
 const HUMAN = /\b(humano|atendente|pessoa de verdade|human|real person|agent)\b/i;
 const CANCEL = /\b(cancel|cancelar|desmarcar)\b/i;
 const YES = /\b(sim|pode|confirmo|yes|sure|confirm)\b/i;
