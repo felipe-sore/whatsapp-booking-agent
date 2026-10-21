@@ -46,6 +46,7 @@ for (const s of scenarios) {
   let bookedAtTurn = null;
   let cancelled = false;
   const trace = [];
+  const transcript = [];
 
   for (const [i, text] of s.turns.entries()) {
     const r = await agent.handle({ conversationId: s.id, phone: '+5521999990000', texts: [text] });
@@ -55,6 +56,7 @@ for (const s of scenarios) {
     if (r.cancelled) cancelled = true;
     trace.push(`${i + 1}:${r.modelAction || '-'}>${r.action || r.outcome}${r.notes?.length ? '[' + r.notes.join(',') + ']' : ''}`);
     const bubbles = r.bubbles || [];
+    transcript.push(`> **Lead:** ${text}`, ...bubbles.map((b) => `> **Agent:** ${b}`), ...(r.notes?.length ? [`> _code: ${r.notes.join(', ')}_`] : []), ...(r.outcome === 'skipped' ? [`> _agent silent: ${r.why}_`] : []), '>');
     const tag = `turn ${i + 1}`;
 
     if (handedOff && r.outcome !== 'skipped') fails.push(`${tag}: answered after handoff`);
@@ -82,7 +84,7 @@ for (const s of scenarios) {
   if (x.handoff !== undefined && handedOff !== x.handoff) fails.push(`expected handoff=${x.handoff}`);
   if (x.cancelled !== undefined && cancelled !== x.cancelled) fails.push(`expected cancelled=${x.cancelled}`);
 
-  results.push({ id: s.id, description: s.description, turns: s.turns.length, fails: fails.length ? [...fails, `trace ${trace.join(' ')}`] : fails, brain: s.brain || (useClaude && s.claude !== false ? 'claude' : 'scripted') });
+  results.push({ transcript, id: s.id, description: s.description, turns: s.turns.length, fails: fails.length ? [...fails, `trace ${trace.join(' ')}`] : fails, brain: s.brain || (useClaude && s.claude !== false ? 'claude' : 'scripted') });
 }
 
 const passed = results.filter((r) => !r.fails.length).length;
@@ -93,6 +95,9 @@ const lines = [
   '| scenario | brain | turns | result |', '|---|---|---|---|',
   ...results.map((r) => `| ${r.id}: ${r.description} | ${r.brain} | ${r.turns} | ${r.fails.length ? 'FAIL: ' + r.fails.join('; ') : 'pass'} |`),
 ];
+for (const r of results.filter((x) => ['happy_path', 'rogue_model'].includes(x.id))) {
+  lines.push('', `## Transcript: ${r.id}`, '', ...r.transcript);
+}
 fs.writeFileSync(new URL('./report.md', import.meta.url), lines.join('\n') + '\n');
 console.log(lines.join('\n'));
 process.exitCode = passed === results.length ? 0 : 1;
