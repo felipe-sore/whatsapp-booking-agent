@@ -59,6 +59,6 @@ export function weekdayOf(ymd) {
 
 export function label(iso, tz, locale) {
   return new Intl.DateTimeFormat(locale, {
-    timeZone: tz, weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit',
+    timeZone: tz, weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
   }).format(new Date(iso));
 }

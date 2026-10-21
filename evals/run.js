@@ -45,6 +45,7 @@ for (const s of scenarios) {
   let handedOff = false;
   let bookedAtTurn = null;
   let cancelled = false;
+  const trace = [];
 
   for (const [i, text] of s.turns.entries()) {
     const r = await agent.handle({ conversationId: s.id, phone: '+5521999990000', texts: [text] });
@@ -52,6 +53,7 @@ for (const s of scenarios) {
     for (const slot of conv.offered) allowedTimes.add(slot.time);
     if (r.booked) { allowedTimes.add(localTime(new Date(r.booked.start), agent.cfg.timezone)); bookedAtTurn ??= i + 1; }
     if (r.cancelled) cancelled = true;
+    trace.push(`${i + 1}:${r.modelAction || '-'}>${r.action || r.outcome}${r.notes?.length ? '[' + r.notes.join(',') + ']' : ''}`);
     const bubbles = r.bubbles || [];
     const tag = `turn ${i + 1}`;
 
@@ -80,7 +82,7 @@ for (const s of scenarios) {
   if (x.handoff !== undefined && handedOff !== x.handoff) fails.push(`expected handoff=${x.handoff}`);
   if (x.cancelled !== undefined && cancelled !== x.cancelled) fails.push(`expected cancelled=${x.cancelled}`);
 
-  results.push({ id: s.id, description: s.description, turns: s.turns.length, fails, brain: s.brain || (useClaude && s.claude !== false ? 'claude' : 'scripted') });
+  results.push({ id: s.id, description: s.description, turns: s.turns.length, fails: fails.length ? [...fails, `trace ${trace.join(' ')}`] : fails, brain: s.brain || (useClaude && s.claude !== false ? 'claude' : 'scripted') });
 }
 
 const passed = results.filter((r) => !r.fails.length).length;
