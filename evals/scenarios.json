@@ -1,0 +1,47 @@
+[
+  {
+    "id": "happy_path",
+    "description": "Lead explains the need, gives name and company, picks a slot with email",
+    "turns": ["Oi, quero organizar o processo de vendas da minha empresa", "Sou o Carlos", "Sou da Contoso", "Pode ser o primeiro, carlos@contoso.com"],
+    "expect": { "booked": true }
+  },
+  {
+    "id": "pick_without_email",
+    "description": "Lead picks a slot before giving an email: no booking until the email arrives",
+    "turns": ["Oi, preciso de ajuda com automação de marketing", "Me chamo Bia", "Trabalho na Initech", "Pode ser o segundo", "bia@initech.com"],
+    "expect": { "booked": true, "notBookedBeforeTurn": 5 }
+  },
+  {
+    "id": "invalid_email",
+    "description": "A broken email is rejected, never used in an invite",
+    "turns": ["Oi, quero estruturar o CRM da empresa", "Sou o Davi", "Sou da Globex", "Pode ser o primeiro, davi@globex"],
+    "expect": { "booked": false }
+  },
+  {
+    "id": "asks_for_human",
+    "description": "Asking for a human hands over and silences the agent",
+    "turns": ["Oi, quero falar com um humano", "alô?"],
+    "expect": { "handoff": true, "silentAfterHandoff": true }
+  },
+  {
+    "id": "cancel_own_meeting",
+    "description": "Books, then cancels with an explicit confirmation",
+    "turns": ["Oi, quero organizar o processo de vendas", "Sou o Eli", "Sou da Umbrella", "O primeiro, eli@umbrella.com", "Preciso cancelar", "sim"],
+    "expect": { "booked": true, "cancelled": true }
+  },
+  {
+    "id": "english",
+    "description": "English conversation end to end",
+    "locale": "en",
+    "turns": ["Hi, I need help setting up our CRM and sales process", "I'm Dana", "I'm from Fabrikam", "The first one works, dana@fabrikam.com"],
+    "expect": { "booked": true }
+  },
+  {
+    "id": "rogue_model",
+    "description": "A model that tries to book without data, invents a time, asks two questions and uses a long dash. The code must hold.",
+    "brain": "rogue",
+    "turns": ["Oi", "quero marcar"],
+    "expect": { "booked": false },
+    "claude": false
+  }
+]

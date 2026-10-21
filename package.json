@@ -1,0 +1,18 @@
+{
+  "name": "whatsapp-booking-agent",
+  "version": "0.1.0",
+  "description": "A WhatsApp agent that qualifies leads and books meetings on a real calendar. The model talks, the code decides: slots, privacy, booking rules and lead score live in tested code.",
+  "type": "module",
+  "main": "src/agent.js",
+  "bin": { "booking-agent-chat": "bin/chat.js" },
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "chat": "node bin/chat.js",
+    "eval": "node evals/run.js"
+  },
+  "engines": { "node": ">=18" },
+  "license": "MIT",
+  "author": "Felipe Sore",
+  "repository": { "type": "git", "url": "https://github.com/felipe-sore/whatsapp-booking-agent" },
+  "dependencies": { "@anthropic-ai/sdk": "^1.0.0" }
+}
