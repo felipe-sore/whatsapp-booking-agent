@@ -69,19 +69,32 @@ The prompt (`src/prompt.js`) carries what I learned writing sales and booking bo
 
 `src/config.js`: business name and services, locale (`pt-BR` and `en` included), time zone, meeting duration, gap, step, minimum notice, same-day policy, horizon, working hours per weekday, holidays, required fields, event title, internal attendees, gates (mode, canary list, stop labels, reply hours, daily cap) and message shape.
 
+## Run it for real
+
+```bash
+cp .env.example .env        # WhatsApp Cloud API, Google service account, Claude, optional Slack
+docker compose up -d        # agent + Postgres (schema in sql/schema.sql)
+```
+
+- **WhatsApp Cloud API:** point the app webhook to `https://<host>/webhook` with your `WHATSAPP_VERIFY_TOKEN`. Every POST is verified against `x-hub-signature-256` on the raw body before parsing; bursts are buffered and duplicates dropped.
+- **Google Calendar:** share the calendar with the service account. The lead's phone is stored in the event's private extended properties, and own events are fetched with a server-side filter on it. Add a public holiday calendar to `GOOGLE_EXTRA_BUSY_CALENDARS` to block holidays.
+- **Handoff:** `SLACK_WEBHOOK_URL` posts every handoff. When a person on your team takes a conversation, `POST /conversations/<phone>/human` with `Authorization: Bearer $ADMIN_TOKEN` silences the agent there.
+- **Postgres:** every query is parameterized; a test feeds `'); DROP TABLE` through every write path.
+- **Go live gradually:** start with `"mode": "shadow"` in `BOOKING_AGENT_CONFIG` (decides and logs, sends nothing), then a canary list, then everyone.
+
 ## Status
 
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Engine, rules, scripted and Claude brains, simulator, tests, evals | done |
-| 2 | WhatsApp Cloud API webhook (signature check), Google Calendar adapter, Slack handoff, Postgres store | next |
-| 3 | Evals against the real model, with the scoreboard here | next |
+| 2 | WhatsApp Cloud API webhook and sender, Google Calendar, Slack handoff, Postgres store, HTTP server, Docker | done, tested against mocked APIs |
+| 3 | Evals against the real model (manual workflow `evals (Claude)`, needs the `ANTHROPIC_API_KEY` secret) | workflow ready, first run pending |
 
-The code is new: what makes it trustworthy today is the test suite and the evals, not production traffic.
+The code is new: what makes it trustworthy today is the test suite and the evals, not production traffic. The adapters are tested against the documented request and response shapes, not yet against live accounts.
 
 ## Tests
 
-`npm test`: slot engine (time zones, DST, gap, notice, holidays), message shaping, lead profile and score, gates, buffer, every booking rule in the agent with a stubbed model, and the Claude request contract. Node 18, 20 and 22 on every push.
+`npm test`: slot engine (time zones, DST, gap, notice, holidays), message shaping, lead profile and score, gates, buffer, every booking rule in the agent with a stubbed model, the Claude request contract, webhook signature and parsing, the HTTP server end to end, Google Calendar (signed JWT, privacy filter, all-day events), Slack and the Postgres store. Node 18, 20 and 22 on every push.
 
 ## About
 

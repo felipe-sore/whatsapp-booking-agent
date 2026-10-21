@@ -7,10 +7,10 @@ import { scriptedBrain } from '../src/brain/scripted.js';
 import { MemoryCalendar } from '../src/adapters/memory-calendar.js';
 import { NOW } from './helpers.js';
 
-async function start() {
+async function start({ quietMs = 10 } = {}) {
   const sent = [];
   const agent = createAgent({ brain: scriptedBrain(), calendar: new MemoryCalendar(), clock: () => NOW, send: async (m) => sent.push(m) });
-  const { server, buffer } = createServer({ agent, verifyToken: 'VT', appSecret: 'AS', adminToken: 'ADM', quietMs: 10, log: { error: () => {} } });
+  const { server, buffer } = createServer({ agent, verifyToken: 'VT', appSecret: 'AS', adminToken: 'ADM', quietMs, log: { error: () => {} } });
   await new Promise((r) => server.listen(0, r));
   const base = `http://127.0.0.1:${server.address().port}`;
   // fetch keeps connections alive; close them or the test process never exits.
@@ -40,13 +40,13 @@ test('unsigned or tampered webhooks are rejected and never reach the agent', asy
 });
 
 test('signed burst: answered once, duplicates ignored', async (tt) => {
-  const t = await start();
+  const t = await start({ quietMs: 300 }); // wider than the gap between test requests
   tt.after(t.stop);
   for (const [id, text] of [['w1', 'Oi, quero organizar o processo de vendas'], ['w1', 'Oi, quero organizar o processo de vendas'], ['w2', 'da minha empresa']]) {
     const body = payload(id, text);
     assert.equal((await fetch(`${t.base}/webhook`, { method: 'POST', body, headers: { 'x-hub-signature-256': sign(body) } })).status, 200);
   }
-  await wait(100);
+  await wait(600);
   const conv = await t.agent.store.get('+5521999990000');
   assert.deepEqual(conv.history.filter((h) => h.role === 'lead').map((h) => h.text), ['Oi, quero organizar o processo de vendas', 'da minha empresa']);
   assert.equal(t.agent.store.decisions.length, 1);
