@@ -39,21 +39,25 @@ export function createAgent({
   }
 
   // A human agent wrote in the conversation: the bot leaves it for good.
-  function humanReplied(convId) {
-    const conv = store.conversations.get(convId);
-    if (conv) conv.state = 'human';
+  async function humanReplied(convId) {
+    const conv = await store.get(convId);
+    if (!conv) return false;
+    conv.state = 'human';
+    await store.save(conv);
+    return true;
   }
 
   async function handle({ conversationId, phone, texts }) {
     const now = clock();
-    const conv = store.conversation(conversationId, phone);
+    const conv = await store.conversation(conversationId, phone);
     conv.history.push(...texts.map((text) => ({ role: 'lead', text, at: now.toISOString() })));
     const record = { conversationId, at: now.toISOString(), notes: [] };
 
-    const gate = checkGates(conv, cfg, now, store.repliesOn(dayKey(now, cfg)));
+    const gate = checkGates(conv, cfg, now, await store.repliesOn(dayKey(now, cfg)));
     if (!gate.ok) {
       Object.assign(record, { outcome: gate.skip ? 'skipped' : 'deferred', why: gate.skip || gate.defer });
-      store.logDecision(record);
+      await store.save(conv);
+      await store.logDecision(record);
       return record;
     }
 
@@ -77,7 +81,7 @@ export function createAgent({
     const audit = mergeProfile(conv.profile, d.extracted, now);
     Object.assign(conv.signals, Object.fromEntries(Object.entries(d.signals || {}).filter(([, v]) => v)));
     conv.lead = score(conv.profile, conv.signals);
-    store.logAudit(conversationId, audit);
+    await store.logAudit(conversationId, audit);
 
     const allowedTimes = conv.offered.map((s) => s.time);
     let { bubbles, notes } = shapeMessages(d.messages, cfg, { allowedTimes });
@@ -168,12 +172,13 @@ export function createAgent({
       record.outcome = 'shadow';
     } else if (bubbles.length) {
       for (const text of bubbles) await send({ conversationId, phone, text, typingMs: typingDelayMs(text) });
-      store.countReply(dayKey(now, cfg));
+      await store.countReply(dayKey(now, cfg));
       record.outcome = 'sent';
     } else {
       record.outcome = 'silent';
     }
-    store.logDecision(record);
+    await store.save(conv);
+    await store.logDecision(record);
     return record;
   }
 

@@ -117,7 +117,7 @@ test('model failure or refusal: neutral handoff, human notified, agent goes quie
 test('a human replying in the conversation silences the agent', async () => {
   const t = setup({ queue: [decision({ messages: ['Oi!'] }), decision({ messages: ['de novo'] })] });
   await t.say('oi');
-  t.agent.humanReplied('c1');
+  await t.agent.humanReplied('c1');
   const r = await t.say('e aí?');
   assert.equal(r.outcome, 'skipped');
   assert.deepEqual(t.sent, ['Oi!']);

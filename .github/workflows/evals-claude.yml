@@ -1,0 +1,24 @@
+name: evals (Claude)
+
+# Manual run: grades the real model on every scenario. Uses API tokens.
+# Needs the repository secret ANTHROPIC_API_KEY.
+on:
+  workflow_dispatch:
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - run: npm run eval -- --claude
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-report-claude
+          path: evals/report.md
