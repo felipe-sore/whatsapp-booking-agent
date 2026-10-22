@@ -168,8 +168,7 @@ export function createAgent({
     conv.lead = score(conv.profile, conv.signals);
     await store.logAudit(conversationId, audit);
 
-    const allowedTimes = conv.offered.map((s) => s.time);
-    let { bubbles, notes } = shapeMessages(d.messages, cfg, { allowedTimes });
+    let { bubbles, notes } = shapeMessages(d.messages, cfg, { offered: conv.offered, today: localDate(now, cfg.timezone) });
     record.notes.push(...notes);
     let action = d.action;
 

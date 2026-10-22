@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { shapeMessages, splitBubble, mentionedTimes } from '../src/messages.js';
+import { shapeMessages, splitBubble, mentionedTimes, mentionedWeekdays } from '../src/messages.js';
+import { systemPrompt } from '../src/prompt.js';
 import { mergeProfile, score, missingFields } from '../src/lead.js';
 import { checkGates, countConversationReply, conversationReplies } from '../src/gates.js';
 import { MessageBuffer } from '../src/buffer.js';
@@ -11,6 +12,44 @@ import { NOW, decision } from './helpers.js';
 
 test('times are recognized in common formats', () => {
   assert.deepEqual(mentionedTimes('às 15:00 ou 9h ou 10h30'), ['15:00', '09:00', '10:30']);
+  assert.deepEqual(mentionedTimes('amanhã às 15 horas'), ['15:00']);
+  assert.deepEqual(mentionedTimes('at 15 hrs, or 3pm, or 3 PM, or 3:30 p.m.'), ['15:00', '15:00', '15:00', '15:30']);
+  assert.deepEqual(mentionedTimes('12am e 12pm'), ['00:00', '12:00']);
+});
+
+test('numbers that are not clock times are left alone', () => {
+  for (const s of ['uma call de 45 minutos', 'são 2 horas de conversa', 'R$ 1.500', 'temos 3 amigos', 'turma de 25 alunos']) {
+    assert.deepEqual(mentionedTimes(s), [], s);
+  }
+});
+
+test('days named in a message', () => {
+  const today = '2026-10-20'; // Tuesday
+  assert.deepEqual([...mentionedWeekdays('Quinta-feira às 10h', today)], [4]);
+  assert.deepEqual([...mentionedWeekdays('amanhã às 10h', today)], [3]);
+  assert.deepEqual([...mentionedWeekdays('depois de amanhã', today)], [4]);
+  assert.deepEqual([...mentionedWeekdays('Thursday at 10:00', today)], [4]);
+});
+
+test('messages: an offered time on another day is dropped too', () => {
+  const offered = [{ day: '2026-10-22', time: '10:00' }]; // Thursday
+  const today = '2026-10-20';
+  const keep = (m) => shapeMessages([m], cfg, { offered, today }).bubbles.length === 1;
+  assert.equal(keep('Quinta às 10:00 funciona?'), true);
+  assert.equal(keep('10:00 fica bom?'), true);
+  assert.equal(keep('depois de amanhã às 10h?'), true);
+  assert.equal(keep('Terça às 10:00?'), false);
+  assert.equal(keep('amanhã às 10h?'), false);
+  assert.equal(keep('Quinta às 15 horas?'), false);
+  assert.equal(keep('Thursday at 3 PM?'), false);
+  assert.equal(keep('Quinta ou sexta às 10:00?'), false);
+});
+
+test('prompt: asked if it is a bot, the agent says it is a virtual assistant', () => {
+  const p = systemPrompt(cfg);
+  assert.match(p, new RegExp(`you are ${cfg.business.agentName}, ${cfg.business.name}'s virtual assistant`));
+  assert.match(p, /Never say or suggest you are human/);
+  assert.doesNotMatch(p, /deflect/i);
 });
 
 test('messages: long dash replaced, unoffered time dropped, one question, split at sentence end', () => {

@@ -20,7 +20,7 @@ I build and run WhatsApp bots for real businesses (sales, scheduling, outbound).
 | Rule | Where it lives | Test |
 |---|---|---|
 | Times are computed from the real calendar, in the business time zone, with duration, gap, notice, same-day policy, holidays and a booking horizon | `src/slots.js` | `tests/slots.test.js` (including DST and midnight) |
-| The model never writes a time; any clock time it writes that was not offered is dropped | `src/messages.js` | `tests/units.test.js`, evals |
+| The model never writes a time; any clock time it writes that was not offered (`15:00`, `15h`, `3 PM`, "às 15 horas"), or an offered time moved to another day ("Thursday at 10:00" when 10:00 was offered on Tuesday), is dropped | `src/messages.js` | `tests/units.test.js`, `tests/agent.test.js`, evals |
 | No booking without name, company and a valid email; the code asks for what is missing | `src/agent.js` | `tests/agent.test.js` |
 | The slot is re-checked against the calendar right before booking, and a slot offered days ago that is now past the notice window is not booked | `src/agent.js` | race and stale-slot tests in `tests/agent.test.js` |
 | One turn at a time per conversation: two bursts never book the same slot twice, and a human who replies while the bot is thinking wins | `src/agent.js` | concurrency tests in `tests/agent.test.js` |
@@ -69,6 +69,8 @@ The latest report is generated in [`evals/report.md`](evals/report.md).
 - Server-side fallback (`fallbacks: "default"`) re-runs a declined request on another model; a final refusal hands the conversation to a human.
 
 The prompt (`src/prompt.js`) carries what I learned writing sales and booking bots: a decision hierarchy for when rules conflict, when to stop qualifying (need, name and company known), when to hand over, and how to treat hesitation. What the prompt does not carry is any rule the business cannot afford to see broken.
+
+The agent never claims to be human, and when someone asks whether they are talking to a bot, it says it is the business's virtual assistant and offers a person. That is what the EU AI Act (Article 50) and California's bot disclosure law expect, and it is the honest answer.
 
 ## Configuration
 

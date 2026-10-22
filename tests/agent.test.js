@@ -383,3 +383,14 @@ test('the model sees only the latest messages; the full history is kept', async 
   assert.deepEqual(last, ['c', 'ok', 'd']);
   assert.equal(t.agent.store.get('c1').history.length, 8);
 });
+
+test('the model cannot move an offered time to another day', async () => {
+  const t = await bookedReady();
+  const slot = t.agent.store.get('c1').offered[0];
+  const names = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+  const wrongDay = names[(new Date(`${slot.day}T12:00:00Z`).getUTCDay() + 1) % 7];
+  t.brain.decide = async () => decision({ messages: [`Fechado, ${wrongDay} às ${slot.time}.`, 'Me passa seu e-mail?'] });
+  const r = await t.say('ok');
+  assert.ok(r.notes.includes('dropped_unoffered_time'));
+  assert.equal(t.sent.at(-1), 'Me passa seu e-mail?');
+});
