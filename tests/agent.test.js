@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { setup, decision, known, PHONE } from './helpers.js';
+import { setup, decision, known, PHONE, NOW } from './helpers.js';
 
 const extract = (o) => ({ name: null, company: null, email: null, need: null, role: null, ...o });
 
