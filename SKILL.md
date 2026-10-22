@@ -32,7 +32,7 @@ belongs in code with a test, not in the prompt.
 
 ## Before going live (phase 2)
 
-Start in `mode: 'shadow'` (decides and logs, sends nothing), review the decision log on real
+Start in `mode: 'shadow'` (decides and logs; sends nothing, writes nothing to the calendar), review the decision log on real
 conversations, then `live` with a canary list of 3 to 5 conversations, then everyone.
 
 ## Never

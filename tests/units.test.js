@@ -70,3 +70,11 @@ test('decision validation', () => {
   assert.ok(validateDecision(decision({ offer_from_date: 'tomorrow' })).length);
   assert.ok(validateDecision(null).length);
 });
+
+test('buffer: remembers only the most recent message ids', () => {
+  const buf = new MessageBuffer({ quietMs: 5000, onFlush: async () => {}, setTimer: () => 0, clearTimer: () => {}, maxSeen: 3 });
+  for (const id of ['m1', 'm2', 'm3', 'm4']) buf.push({ conversationId: 'c', phone: 'p', messageId: id, text: id });
+  assert.equal(buf.seen.size, 3);
+  assert.ok(!buf.seen.has('m1'));
+  assert.equal(buf.push({ conversationId: 'c', phone: 'p', messageId: 'm4', text: 'again' }), false);
+});

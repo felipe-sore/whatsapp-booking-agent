@@ -22,14 +22,15 @@ I build and run WhatsApp bots for real businesses (sales, scheduling, outbound).
 | Times are computed from the real calendar, in the business time zone, with duration, gap, notice, same-day policy, holidays and a booking horizon | `src/slots.js` | `tests/slots.test.js` (including DST and midnight) |
 | The model never writes a time; any clock time it writes that was not offered is dropped | `src/messages.js` | `tests/units.test.js`, evals |
 | No booking without name, company and a valid email; the code asks for what is missing | `src/agent.js` | `tests/agent.test.js` |
-| The slot is re-checked against the calendar right before booking | `src/agent.js` | race test in `tests/agent.test.js` |
+| The slot is re-checked against the calendar right before booking, and a slot offered days ago that is now past the notice window is not booked | `src/agent.js` | race and stale-slot tests in `tests/agent.test.js` |
+| One turn at a time per conversation: two bursts never book the same slot twice, and a human who replies while the bot is thinking wins | `src/agent.js` | concurrency tests in `tests/agent.test.js` |
 | The model never sees other people's events; reschedule and cancel act only on the lead's own meeting | `src/adapters/memory-calendar.js`, `src/agent.js` | privacy and cancel tests |
 | Cancel needs an explicit confirmation | `src/agent.js` | cancel test |
 | A human writing in the conversation silences the agent for good | `src/gates.js` | gate and agent tests |
 | Model error, refusal or malformed output hands over to a human with a neutral message | `src/agent.js`, `src/decision.js` | failure tests |
 | Lead score and the audit trail of every field change are computed by code | `src/lead.js` | `tests/units.test.js` |
 | One question per turn, short bubbles, no long dashes | `src/messages.js` | evals |
-| Shadow mode (decide, log, send nothing), canary conversations, reply hours, daily cap | `src/gates.js`, `src/agent.js` | gate tests |
+| Shadow mode (decide and log; no message, no calendar write, no team ping), canary conversations, reply hours, daily cap | `src/gates.js`, `src/agent.js` | gate tests |
 
 ## Try it in one minute
 
@@ -80,7 +81,7 @@ docker compose up -d        # agent + Postgres (schema in sql/schema.sql)
 - **Google Calendar:** share the calendar with the service account. The lead's phone is stored in the event's private extended properties, and own events are fetched with a server-side filter on it. Add a public holiday calendar to `GOOGLE_EXTRA_BUSY_CALENDARS` to block holidays.
 - **Handoff:** `SLACK_WEBHOOK_URL` posts every handoff. When a person on your team takes a conversation, `POST /conversations/<phone>/human` with `Authorization: Bearer $ADMIN_TOKEN` silences the agent there.
 - **Postgres:** every query is parameterized; a test feeds `'); DROP TABLE` through every write path.
-- **Go live gradually:** start with `"mode": "shadow"` in `BOOKING_AGENT_CONFIG` (decides and logs, sends nothing), then a canary list, then everyone.
+- **Go live gradually:** start with `"mode": "shadow"` in `BOOKING_AGENT_CONFIG` (decides and logs; sends nothing and writes nothing to the calendar), then a canary list, then everyone.
 
 ## Status
 

@@ -18,6 +18,9 @@ import { MemoryStore } from './store.js';
 //   - privacy: the model never sees other people's events; reschedule/cancel only own events
 //   - a human in the conversation, or a stop label, silences the agent for good
 //   - a model error or refusal hands over to a human with a neutral message
+//   - shadow mode touches nothing outside: no message, no calendar write
+//   - one turn at a time per conversation, so two bursts never book twice
+//     (in-process lock: run one instance per number)
 
 export function createAgent({
   cfg: userCfg = {}, brain, calendar, store = new MemoryStore(),
@@ -38,17 +41,44 @@ export function createAgent({
     return offer.length ? [txt.offer(offer.map((s) => label(s.start)))] : [txt.no_slots];
   }
 
+  // Turns of the same conversation run one after the other. Without this, a
+  // second burst arriving while the first is still typing would load the same
+  // state, book the same slot twice, and the last save would erase the other.
+  const queues = new Map();
+  function serial(convId, fn) {
+    const run = (queues.get(convId) || Promise.resolve()).then(fn);
+    const tail = run.catch(() => {});
+    queues.set(convId, tail);
+    tail.then(() => { if (queues.get(convId) === tail) queues.delete(convId); });
+    return run;
+  }
+  const takenOver = new Set();
+
   // A human agent wrote in the conversation: the bot leaves it for good.
-  async function humanReplied(convId) {
-    const conv = await store.get(convId);
-    if (!conv) return false;
-    conv.state = 'human';
-    await store.save(conv);
-    return true;
+  // A turn already in flight sees the flag and sends nothing.
+  function humanReplied(convId) {
+    takenOver.add(convId);
+    return serial(convId, async () => {
+      const conv = await store.get(convId);
+      if (!conv) return false;
+      conv.state = 'human';
+      await store.save(conv);
+      return true;
+    });
   }
 
-  async function handle({ conversationId, phone, texts }) {
+  // An offered slot can go stale while the lead thinks it over: it must still
+  // respect the minimum notice and the same-day rule at the moment of booking.
+  function stillBookable(slot, now) {
+    if (Date.parse(slot.start) < now.getTime() + cfg.minNoticeMinutes * 60000) return false;
+    return cfg.allowSameDay || slot.day > localDate(now, cfg.timezone);
+  }
+
+  const handle = (turn) => serial(turn.conversationId, () => handleTurn(turn));
+
+  async function handleTurn({ conversationId, phone, texts }) {
     const now = clock();
+    const shadow = cfg.mode === 'shadow';
     const conv = await store.conversation(conversationId, phone);
     conv.history.push(...texts.map((text) => ({ role: 'lead', text, at: now.toISOString() })));
     const record = { conversationId, at: now.toISOString(), notes: [] };
@@ -105,6 +135,11 @@ export function createAgent({
         record.notes.push('book_blocked_slot_not_offered');
         conv.offered = pickOffer(free, { count: cfg.offerCount });
         bubbles = offerBubbles(conv.offered);
+      } else if (!stillBookable(slot, clock())) {
+        action = 'offer_slots';
+        record.notes.push('book_blocked_slot_expired');
+        conv.offered = pickOffer(free, { count: cfg.offerCount });
+        bubbles = [txt.slot_taken, ...offerBubbles(conv.offered)];
       } else if (!isStillFree(slot, (await availability(clock())).busy, cfg)) {
         // Re-read the calendar: someone may have taken the slot since it was offered.
         action = 'offer_slots';
@@ -113,12 +148,13 @@ export function createAgent({
         bubbles = [txt.slot_taken, ...offerBubbles(conv.offered)];
       } else {
         const p = conv.profile;
-        const created = await calendar.create({
+        const event = {
           start: slot.start, end: slot.end, phone,
           title: cfg.eventTitle(p),
           description: `Name: ${p.name}\nCompany: ${p.company}\nPhone: ${phone}\nNeed: ${p.need || ''}`,
           attendees: [p.email, ...cfg.internalAttendees],
-        });
+        };
+        const created = shadow ? { id: 'shadow' } : await calendar.create(event);
         conv.eventId = created.id;
         conv.state = 'booked';
         conv.offered = [];
@@ -136,16 +172,16 @@ export function createAgent({
         record.notes.push(`${d.action}_needs_confirmation`);
         bubbles = d.action === 'cancel' ? [txt.confirm_cancel] : bubbles;
       } else if (action === 'cancel') {
-        await calendar.remove(own.id);
+        if (!shadow) await calendar.remove(own.id);
         conv.state = 'active';
         bubbles = [txt.cancelled];
         record.cancelled = own.id;
-      } else if (!slot || !isStillFree(slot, busy.filter((b) => b.start !== own.start), cfg)) {
+      } else if (!slot || !stillBookable(slot, clock()) || !isStillFree(slot, busy.filter((b) => b.start !== own.start), cfg)) {
         action = 'offer_slots';
         conv.offered = pickOffer(free, { fromDate: d.offer_from_date || undefined, count: cfg.offerCount });
         bubbles = offerBubbles(conv.offered);
       } else {
-        await calendar.update(own.id, { start: slot.start, end: slot.end });
+        if (!shadow) await calendar.update(own.id, { start: slot.start, end: slot.end });
         conv.offered = [];
         bubbles = [txt.rescheduled(label(slot.start))];
         record.rescheduled = { eventId: own.id, start: slot.start };
@@ -162,14 +198,19 @@ export function createAgent({
       if (!bubbles.length || reason === 'model_failed') bubbles = [txt.handoff];
       return 'handoff';
     }
-    if (record.handoff) await notify({ conversationId, phone, reason: record.handoff, profile: conv.profile });
+    if (record.handoff && !shadow) await notify({ conversationId, phone, reason: record.handoff, profile: conv.profile });
 
     record.action = action;
     record.bubbles = bubbles;
-    conv.history.push(...bubbles.map((text) => ({ role: 'agent', text, at: now.toISOString() })));
 
-    if (cfg.mode === 'shadow') {
+    if (shadow) {
       record.outcome = 'shadow';
+      if (record.booked || record.cancelled || record.rescheduled) record.notes.push('shadow_calendar_not_written');
+    } else if (takenOver.has(conversationId)) {
+      // A human replied while this turn was thinking: say nothing.
+      conv.state = 'human';
+      bubbles = [];
+      record.outcome = 'human_took_over';
     } else if (bubbles.length) {
       for (const text of bubbles) await send({ conversationId, phone, text, typingMs: typingDelayMs(text) });
       await store.countReply(dayKey(now, cfg));
@@ -177,6 +218,7 @@ export function createAgent({
     } else {
       record.outcome = 'silent';
     }
+    conv.history.push(...bubbles.map((text) => ({ role: 'agent', text, at: now.toISOString() })));
     await store.save(conv);
     await store.logDecision(record);
     return record;

@@ -146,3 +146,51 @@ test('lead score and audit trail are kept by the code', async () => {
   assert.equal(conv.lead.status, 'hot');
   assert.deepEqual(t.agent.store.audit.map((a) => a.field), ['name', 'email', 'need']);
 });
+
+test('shadow mode never writes to the calendar or pings the team', async () => {
+  const t = setup({ queue: [decision({ action: 'offer_slots', extracted: extract(known) })], cfg: { mode: 'shadow' } });
+  await t.say('quero marcar');
+  const slot = t.agent.store.conversations.get('c1').offered[0];
+  t.brain.decide = async () => decision({ action: 'book', slot_choice: slot.start });
+  const r = await t.say('pode ser o primeiro');
+  assert.equal(r.outcome, 'shadow');
+  assert.deepEqual(r.booked, { eventId: 'shadow', start: slot.start });
+  assert.ok(r.notes.includes('shadow_calendar_not_written'));
+  assert.equal(t.calendar.events.length, 0);
+  assert.deepEqual(t.sent, []);
+});
+
+test('two bursts at the same time are handled one after the other: one booking', async () => {
+  const t = await bookedReady();
+  const slot = t.agent.store.conversations.get('c1').offered[0];
+  t.brain.decide = async () => {
+    await new Promise((r) => setTimeout(r, 20));
+    return decision({ action: 'book', slot_choice: slot.start });
+  };
+  await Promise.all([t.say('sim, o primeiro'), t.say('meu email é carla@contoso.com')]);
+  assert.equal(t.calendar.events.length, 1);
+  assert.equal(t.agent.store.conversations.get('c1').history.filter((h) => h.role === 'lead').length, 3);
+});
+
+test('a human who replies while the bot is thinking wins: nothing is sent', async () => {
+  let human;
+  const t = setup({ queue: [async () => { human = t.agent.humanReplied('c1'); return decision({ messages: ['Oi!'] }); }] });
+  const r = await t.say('oi');
+  assert.equal(await human, true);
+  assert.equal(r.outcome, 'human_took_over');
+  assert.deepEqual(t.sent, []);
+  assert.equal(t.agent.store.conversations.get('c1').state, 'human');
+});
+
+test('an offered slot that went stale is not booked', async () => {
+  let now = NOW;
+  const t = setup({ queue: [decision({ action: 'offer_slots', extracted: extract(known) })], clock: () => now });
+  await t.say('quero marcar');
+  const slot = t.agent.store.conversations.get('c1').offered[0];
+  now = new Date(Date.parse(slot.start) + 86400000);
+  t.brain.decide = async () => decision({ action: 'book', slot_choice: slot.start });
+  const r = await t.say('pode ser o primeiro');
+  assert.ok(r.notes.includes('book_blocked_slot_expired'));
+  assert.equal(r.action, 'offer_slots');
+  assert.equal(t.calendar.events.length, 0);
+});
