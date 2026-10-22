@@ -45,8 +45,11 @@ export function whatsappSender({ token, phoneNumberId, version = 'v21.0', fetchI
       body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to: phone.replace(/^\+/, ''), type: 'text', text: { body: text, preview_url: false } }),
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(`WhatsApp send failed: HTTP ${res.status} ${err.error?.code || ''} ${err.error?.message || ''}`.trim());
+      const body = await res.json().catch(() => ({}));
+      const err = new Error(`WhatsApp send failed: HTTP ${res.status} ${body.error?.code || ''} ${body.error?.message || ''}`.trim());
+      err.code = body.error?.code ?? null; // the Meta error code, read by src/delivery.js
+      err.status = res.status;
+      throw err;
     }
     return res.json();
   };

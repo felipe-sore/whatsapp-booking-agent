@@ -78,3 +78,26 @@ test('buffer: remembers only the most recent message ids', () => {
   assert.ok(!buf.seen.has('m1'));
   assert.equal(buf.push({ conversationId: 'c', phone: 'p', messageId: 'm4', text: 'again' }), false);
 });
+
+import { classifyMetaError, deliveryFailureNote } from '../src/delivery.js';
+
+test('delivery: Meta error codes map to what to do next', () => {
+  assert.equal(classifyMetaError(131049).action, 'retry_fast'); // inbox full: looks final, clears on its own
+  assert.equal(classifyMetaError('131048').action, 'retry_slow'); // low reputation: fast retries make it worse
+  assert.equal(classifyMetaError(131047).action, 'permanent');
+  assert.equal(classifyMetaError(133010).action, 'permanent');
+  assert.deepEqual(classifyMetaError(999999), { code: 999999, action: 'unknown', reason: 'Meta rejected the send (code 999999)' });
+  assert.equal(classifyMetaError(null).code, null);
+  assert.equal(classifyMetaError(undefined).action, 'unknown');
+});
+
+test('delivery: the note says what happened and what to do', () => {
+  const inbox = deliveryFailureNote(classifyMetaError(131049));
+  assert.match(inbox, /^Not delivered: the contact's inbox is full/);
+  assert.match(inbox, /resumes when the lead writes again/);
+  assert.match(deliveryFailureNote(classifyMetaError(131048)), /do not retry in a loop/);
+  const booked = deliveryFailureNote(classifyMetaError(131026), { sent: 1, total: 2, calendarChanged: true });
+  assert.match(booked, /1 of 2 messages went out/);
+  assert.match(booked, /calendar was already changed/);
+  assert.match(booked, /approved template/);
+});

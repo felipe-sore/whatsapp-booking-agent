@@ -25,14 +25,14 @@ export function stubBrain(queue) {
   };
 }
 
-export function setup({ queue = [], events = [], cfg = {}, clock = () => NOW } = {}) {
+export function setup({ queue = [], events = [], cfg = {}, clock = () => NOW, send } = {}) {
   const calendar = new MemoryCalendar(events);
   const brain = stubBrain(queue);
   const sent = [];
   const notified = [];
   const agent = createAgent({
     cfg, brain, calendar, clock,
-    send: async (m) => sent.push(m.text), notify: async (n) => notified.push(n),
+    send: send ? (m) => send(m, sent) : async (m) => sent.push(m.text), notify: async (n) => notified.push(n),
   });
   const say = (text) => agent.handle({ conversationId: 'c1', phone: PHONE, texts: [text] });
   return { agent, calendar, brain, sent, notified, say };

@@ -194,3 +194,49 @@ test('an offered slot that went stale is not booked', async () => {
   assert.equal(r.action, 'offer_slots');
   assert.equal(t.calendar.events.length, 0);
 });
+
+const metaError = (code) => Object.assign(new Error(`WhatsApp send failed: ${code}`), { code });
+
+// A sender that delivers the first `after` messages, then fails with a Meta error code.
+function failingSend(code, { after = 0 } = {}) {
+  let n = 0;
+  return async (m, sent) => { if (n++ >= after) throw metaError(code); sent.push(m.text); };
+}
+
+test('send failure: a transient error is logged, the team is not bothered', async () => {
+  const t = setup({ queue: [decision({ messages: ['Oi!'] })], send: failingSend(131049) });
+  const r = await t.say('oi');
+  assert.equal(r.outcome, 'send_failed');
+  assert.equal(r.delivery.action, 'retry_fast');
+  assert.match(r.delivery.note, /inbox is full/);
+  assert.deepEqual(t.notified, []);
+  assert.equal(t.agent.store.conversations.get('c1').history.filter((h) => h.role === 'agent').length, 0);
+});
+
+test('send failure: a permanent error alerts the team with the reason', async () => {
+  const t = setup({ queue: [decision({ messages: ['Oi!'] })], send: failingSend(131047) });
+  const r = await t.say('oi');
+  assert.equal(r.delivery.action, 'permanent');
+  assert.equal(t.notified[0].reason, 'delivery_failed');
+  assert.match(t.notified[0].note, /outside the 24h window/);
+});
+
+test('send failure after booking: the team hears about it even when the error is transient', async () => {
+  const t = await bookedReady({ send: failingSend(131000, { after: 2 }) });
+  assert.equal(t.sent.length, 2);
+  const slot = t.agent.store.conversations.get('c1').offered[0];
+  t.brain.decide = async () => decision({ action: 'book', slot_choice: slot.start });
+  const r = await t.say('o primeiro');
+  assert.equal(r.outcome, 'send_failed');
+  assert.equal(t.calendar.events.length, 1);
+  assert.equal(t.agent.store.conversations.get('c1').state, 'booked');
+  assert.match(t.notified.at(-1).note, /calendar was already changed, but the lead was not told/);
+});
+
+test('send failure midway: only what went out goes to the history', async () => {
+  const t = setup({ queue: [decision({ action: 'offer_slots', messages: ['Vamos marcar.'], extracted: extract({}) })], send: failingSend(131026, { after: 1 }) });
+  const r = await t.say('quero marcar');
+  assert.equal(r.delivery.sent, 1);
+  assert.deepEqual(t.agent.store.conversations.get('c1').history.filter((h) => h.role === 'agent').map((h) => h.text), ['Vamos marcar.']);
+  assert.match(t.notified[0].note, /1 of 2 messages went out/);
+});

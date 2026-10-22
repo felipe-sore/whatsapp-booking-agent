@@ -46,7 +46,7 @@ test('WhatsApp send: Graph API request shape and error surfacing', async () => {
   assert.deepEqual(JSON.parse(calls[0].body).text, { body: 'Oi!', preview_url: false });
   assert.equal(JSON.parse(calls[0].body).to, '5521999990000');
   const bad = whatsappSender({ token: 'T', phoneNumberId: '111', fetchImpl: async () => ok({ error: { code: 131047, message: 'Re-engagement message' } }, 400) });
-  await assert.rejects(bad({ phone: '+1', text: 'x' }), /131047/);
+  await assert.rejects(bad({ phone: '+1', text: 'x' }), (err) => err.code === 131047 && err.status === 400 && /131047/.test(err.message));
 });
 
 const { privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
@@ -117,4 +117,12 @@ test('Postgres store: lead text never enters a SQL string', async () => {
     assert.ok(/\$1/.test(q.text));
   }
   assert.ok(queries.some((q) => JSON.stringify(q.params).includes('DROP TABLE')));
+});
+
+test('Slack: a failed send gets its own alert with the note', async () => {
+  const { calls, fetchImpl } = recorder(() => ({ ok: true, status: 200, json: async () => ({}) }));
+  await slackNotifier({ webhookUrl: 'https://hooks.slack.com/x', fetchImpl })({ phone: '+55', reason: 'delivery_failed', note: 'Not delivered: x.', profile: { name: 'Ana' } });
+  const text = JSON.parse(calls[0].body).text;
+  assert.match(text, /not delivered: Ana \(\+55\)\. Not delivered: x\./);
+  assert.doesNotMatch(text, /now silent/);
 });

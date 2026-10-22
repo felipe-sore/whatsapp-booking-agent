@@ -8,6 +8,7 @@ import { shapeMessages, typingDelayMs } from './messages.js';
 import { validateDecision } from './decision.js';
 import { systemPrompt, turnContext } from './prompt.js';
 import { MemoryStore } from './store.js';
+import { classifyMetaError, deliveryFailureNote, isTransient } from './delivery.js';
 
 // The agent: the model proposes a decision, this file decides what happens.
 //
@@ -19,6 +20,9 @@ import { MemoryStore } from './store.js';
 //   - a human in the conversation, or a stop label, silences the agent for good
 //   - a model error or refusal hands over to a human with a neutral message
 //   - shadow mode touches nothing outside: no message, no calendar write
+//   - a failed send is classified by its Meta error code; the team is alerted
+//     when a person has to act (permanent error, or a calendar change the lead
+//     never heard about)
 //   - one turn at a time per conversation, so two bursts never book twice
 //     (in-process lock: run one instance per number)
 
@@ -212,9 +216,27 @@ export function createAgent({
       bubbles = [];
       record.outcome = 'human_took_over';
     } else if (bubbles.length) {
-      for (const text of bubbles) await send({ conversationId, phone, text, typingMs: typingDelayMs(text) });
-      await store.countReply(dayKey(now, cfg));
-      record.outcome = 'sent';
+      const sent = [];
+      try {
+        for (const text of bubbles) {
+          await send({ conversationId, phone, text, typingMs: typingDelayMs(text) });
+          sent.push(text);
+        }
+        record.outcome = 'sent';
+      } catch (err) {
+        // Stop at the first failure: the rest would fail the same way, and a
+        // half-delivered turn must not be logged as the lead having read it.
+        const cls = classifyMetaError(err.code);
+        const calendarChanged = Boolean(record.booked || record.rescheduled || record.cancelled);
+        const note = deliveryFailureNote(cls, { sent: sent.length, total: bubbles.length, calendarChanged });
+        record.outcome = 'send_failed';
+        record.delivery = { code: cls.code, action: cls.action, reason: cls.reason, sent: sent.length, note };
+        if (calendarChanged || !isTransient(cls)) {
+          await notify({ conversationId, phone, reason: 'delivery_failed', note, profile: conv.profile });
+        }
+        bubbles = sent;
+      }
+      if (sent.length) await store.countReply(dayKey(now, cfg));
     } else {
       record.outcome = 'silent';
     }
