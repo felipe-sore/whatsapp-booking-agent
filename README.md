@@ -32,6 +32,9 @@ I build and run WhatsApp bots for real businesses (sales, scheduling, outbound).
 | Lead score and the audit trail of every field change are computed by code | `src/lead.js` | `tests/units.test.js` |
 | One question per turn, short bubbles, no long dashes | `src/messages.js` | evals |
 | Shadow mode (decide and log; no message, no calendar write, no team ping), canary conversations, reply hours, daily cap | `src/gates.js`, `src/agent.js` | gate tests |
+| One conversation has its own daily reply cap: a number that floods the agent cannot use up the day for everyone else or run up the model bill (the model is not called past the cap; the team hears about it once) | `src/gates.js`, `src/agent.js` | cap tests |
+| A calendar, database or network outage never fails in silence: nothing half-done is recorded, the lead's message is kept and the team is told to answer by hand | `src/agent.js` | outage tests |
+| Only the latest messages go to the model (what is already known rides in the turn context), so the cost of a turn does not grow with the conversation | `src/agent.js` | history window test |
 
 ## Try it in one minute
 
@@ -69,7 +72,7 @@ The prompt (`src/prompt.js`) carries what I learned writing sales and booking bo
 
 ## Configuration
 
-`src/config.js`: business name and services, locale (`pt-BR` and `en` included), time zone, meeting duration, gap, step, minimum notice, same-day policy, horizon, working hours per weekday, holidays, required fields, event title, internal attendees, gates (mode, canary list, stop labels, reply hours, daily cap) and message shape.
+`src/config.js`: business name and services, locale (`pt-BR` and `en` included), time zone, meeting duration, gap, step, minimum notice, same-day policy, horizon, working hours per weekday, holidays, required fields, event title, internal attendees, gates (mode, canary list, stop labels, reply hours, daily cap, per-conversation daily cap), how many recent messages the model sees, and message shape.
 
 ## Run it for real
 
@@ -80,7 +83,8 @@ docker compose up -d        # agent + Postgres (schema in sql/schema.sql)
 
 - **WhatsApp Cloud API:** point the app webhook to `https://<host>/webhook` with your `WHATSAPP_VERIFY_TOKEN`. Every POST is verified against `x-hub-signature-256` on the raw body before parsing; bursts are buffered and duplicates dropped.
 - **Google Calendar:** share the calendar with the service account. The lead's phone is stored in the event's private extended properties, and own events are fetched with a server-side filter on it. Add a public holiday calendar to `GOOGLE_EXTRA_BUSY_CALENDARS` to block holidays.
-- **Handoff:** `SLACK_WEBHOOK_URL` posts every handoff. When a person on your team takes a conversation, `POST /conversations/<phone>/human` with `Authorization: Bearer $ADMIN_TOKEN` silences the agent there.
+- **Handoff:** `SLACK_WEBHOOK_URL` posts every handoff, failed delivery, outage and conversation limit. When a person on your team takes a conversation, `POST /conversations/<phone>/human` with `Authorization: Bearer $ADMIN_TOKEN` silences the agent there.
+- **Docker:** `.dockerignore` keeps `.env`, keys and `.git` out of the image; pass secrets at run time.
 - **Postgres:** every query is parameterized; a test feeds `'); DROP TABLE` through every write path.
 - **Go live gradually:** start with `"mode": "shadow"` in `BOOKING_AGENT_CONFIG` (decides and logs; sends nothing and writes nothing to the calendar), then a canary list, then everyone.
 
