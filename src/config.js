@@ -41,7 +41,11 @@ export const defaultConfig = {
   canaryConversations: [], // non-empty: only these conversations get answers
   stopLabels: ['do_not_contact', 'human_only'],
   replyHours: { start: 7, end: 22 },
-  dailyCap: 300,
+  dailyCap: 300,               // replies per day, all conversations together
+  conversationDailyCap: 30,    // replies per day in one conversation: one abusive number cannot use up dailyCap
+
+  // Model input
+  modelHistoryMessages: 40,    // only the latest messages go to the model; what is known rides in the turn context
 
   // Message shape
   maxBubbles: 3,

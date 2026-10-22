@@ -1,6 +1,6 @@
 import { defaultConfig } from './config.js';
 import { t } from './i18n.js';
-import { checkGates, dayKey } from './gates.js';
+import { checkGates, dayKey, countConversationReply } from './gates.js';
 import { freeSlots, pickOffer, isStillFree } from './slots.js';
 import { localDate, label as fmtLabel } from './time.js';
 import { mergeProfile, score, missingFields } from './lead.js';
@@ -26,6 +26,9 @@ import { classifyMetaError, classifySendError, deliveryFailureNote, isTransient 
 //     lead never heard about). A failed alert never stops the turn from saving.
 //   - one turn at a time per conversation, so two bursts never book twice
 //     (in-process lock: run one instance per number)
+//   - one conversation cannot use up the day: it has its own reply cap
+//   - an outage (calendar, database, network) never fails in silence: the
+//     lead's message is kept and the team is told to answer by hand
 
 export function createAgent({
   cfg: userCfg = {}, brain, calendar, store = new MemoryStore(),
@@ -109,15 +112,35 @@ export function createAgent({
 
   async function handleTurn({ conversationId, phone, texts }) {
     const now = clock();
-    const shadow = cfg.mode === 'shadow';
     const conv = await store.conversation(conversationId, phone);
-    const previousOffer = conv.offered;
     conv.history.push(...texts.map((text) => ({ role: 'lead', text, at: now.toISOString() })));
     const record = { conversationId, at: now.toISOString(), notes: [] };
+    try {
+      return await runTurn({ conversationId, phone, conv, record, now });
+    } catch (err) {
+      record.outcome = 'error';
+      record.notes.push(`turn_failed: ${err.message}`);
+      if (cfg.mode !== 'shadow') {
+        await alert(record, { kind: 'error', conversationId, phone, note: `Error: ${err.message}.`, profile: conv.profile });
+      }
+      await store.save(conv);
+      await store.logDecision(record);
+      return record;
+    }
+  }
 
+  async function runTurn({ conversationId, phone, conv, record, now }) {
+    const shadow = cfg.mode === 'shadow';
+    const previousOffer = conv.offered;
     const gate = checkGates(conv, cfg, now, await store.repliesOn(dayKey(now, cfg)));
     if (!gate.ok) {
       Object.assign(record, { outcome: gate.skip ? 'skipped' : 'deferred', why: gate.skip || gate.defer });
+      // A conversation that hits its own cap is unusual: tell the team once a day.
+      const day = dayKey(now, cfg);
+      if (gate.defer === 'conversation_daily_cap' && conv.replies.alerted !== day && !shadow) {
+        conv.replies.alerted = day;
+        await alert(record, { kind: 'limit', conversationId, phone, profile: conv.profile });
+      }
       await store.save(conv);
       await store.logDecision(record);
       return record;
@@ -130,7 +153,7 @@ export function createAgent({
 
     let d;
     try {
-      d = await brain.decide({ system, history: conv.history, context });
+      d = await brain.decide({ system, history: conv.history.slice(-cfg.modelHistoryMessages), context });
       const errors = validateDecision(d);
       if (errors.length) throw new Error(`invalid decision: ${errors.join(', ')}`);
     } catch (err) {
@@ -269,7 +292,10 @@ export function createAgent({
       }
       // A failed status arriving later for one of these ids means the lead missed the change.
       if (calendarChanged) conv.calendarNoticeIds = ids;
-      if (sent.length) await store.countReply(dayKey(now, cfg));
+      if (sent.length) {
+        await store.countReply(dayKey(now, cfg));
+        countConversationReply(conv, dayKey(now, cfg));
+      }
     } else {
       record.outcome = 'silent';
     }

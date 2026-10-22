@@ -304,3 +304,82 @@ test('a failed status from the webhook: alert only when a person has to act', as
 
   assert.equal(await t.agent.deliveryFailed({ conversationId: 'nobody', messageId: 'x', code: 131026 }), null);
 });
+
+test('calendar down: nothing is sent, the message is kept and the team answers by hand', async () => {
+  const t = setup({ queue: [decision({ messages: ['Oi!'] })] });
+  const busy = t.calendar.busy.bind(t.calendar);
+  t.calendar.busy = async () => { throw new Error('Google Calendar GET /events: HTTP 503'); };
+  const r = await t.say('oi, quero marcar');
+  assert.equal(r.outcome, 'error');
+  assert.deepEqual(t.sent, []);
+  assert.equal(t.notified.length, 1);
+  assert.equal(t.notified[0].kind, 'error');
+  assert.match(t.notified[0].note, /HTTP 503/);
+  assert.deepEqual(t.agent.store.get('c1').history.map((h) => h.text), ['oi, quero marcar']);
+  assert.equal(t.agent.store.decisions.at(-1).outcome, 'error');
+  // Calendar back: the next turn works and the conversation was not silenced.
+  t.calendar.busy = busy;
+  const r2 = await t.say('alô?');
+  assert.equal(r2.outcome, 'sent');
+  assert.deepEqual(t.sent, ['Oi!']);
+});
+
+test('calendar write fails at booking: no booking is recorded and the team is told', async () => {
+  const t = await bookedReady();
+  const slot = t.agent.store.conversations.get('c1').offered[0];
+  t.calendar.create = async () => { throw new Error('Google Calendar POST /events: HTTP 500'); };
+  t.brain.decide = async () => decision({ action: 'book', slot_choice: slot.start });
+  const sentBefore = t.sent.length;
+  const r = await t.say('o primeiro');
+  assert.equal(r.outcome, 'error');
+  const conv = t.agent.store.get('c1');
+  assert.equal(conv.state, 'active');
+  assert.equal(conv.eventId, null);
+  assert.equal(t.sent.length, sentBefore);
+  assert.equal(t.notified.at(-1).kind, 'error');
+});
+
+test('an outage in shadow mode does not ping the team', async () => {
+  const t = setup({ cfg: { mode: 'shadow' } });
+  t.calendar.busy = async () => { throw new Error('down'); };
+  assert.equal((await t.say('oi')).outcome, 'error');
+  assert.deepEqual(t.notified, []);
+});
+
+test('one conversation cannot use up the day: own cap, no model call, one alert', async () => {
+  const t = setup({ cfg: { conversationDailyCap: 2 } });
+  let calls = 0;
+  t.brain.decide = async () => { calls++; return decision({ messages: ['ok'] }); };
+  await t.say('1');
+  await t.say('2');
+  assert.equal(calls, 2);
+  const r = await t.say('3');
+  assert.equal(r.outcome, 'deferred');
+  assert.equal(r.why, 'conversation_daily_cap');
+  await t.say('4');
+  assert.equal(calls, 2, 'the model is not called past the cap');
+  assert.deepEqual(t.sent, ['ok', 'ok']);
+  assert.deepEqual(t.notified.map((n) => n.kind), ['limit']);
+  // Another lead is still answered.
+  const other = await t.agent.handle({ conversationId: 'c2', phone: '+5511988880000', texts: ['oi'] });
+  assert.equal(other.outcome, 'sent');
+});
+
+test('the cap resets the next day', async () => {
+  let now = NOW;
+  const t = setup({ cfg: { conversationDailyCap: 1 }, clock: () => now });
+  t.brain.decide = async () => decision({ messages: ['ok'] });
+  await t.say('1');
+  assert.equal((await t.say('2')).why, 'conversation_daily_cap');
+  now = new Date(NOW.getTime() + 86400000);
+  assert.equal((await t.say('3')).outcome, 'sent');
+});
+
+test('the model sees only the latest messages; the full history is kept', async () => {
+  const t = setup({ cfg: { modelHistoryMessages: 3 } });
+  t.brain.decide = async (input) => { t.brain.seen.push(input); return decision({ messages: ['ok'] }); };
+  for (const m of ['a', 'b', 'c', 'd']) await t.say(m);
+  const last = t.brain.seen.at(-1).history.map((h) => h.text);
+  assert.deepEqual(last, ['c', 'ok', 'd']);
+  assert.equal(t.agent.store.get('c1').history.length, 8);
+});

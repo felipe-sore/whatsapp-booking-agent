@@ -136,3 +136,13 @@ test('WhatsApp webhook: failed statuses are surfaced, the others ignored', () =>
   assert.deepEqual(messages, []);
   assert.deepEqual(failures, [{ messageId: 'wamid.2', phone: '+5521999990000', code: 131026, detail: 'Message undeliverable' }]);
 });
+
+test('Slack: an agent failure and a conversation limit get their own alerts', async () => {
+  const { calls, fetchImpl } = recorder(() => ({ ok: true, status: 200, json: async () => ({}) }));
+  const notify = slackNotifier({ webhookUrl: 'https://hooks.slack.com/x', fetchImpl });
+  await notify({ kind: 'error', phone: '+55', note: 'Error: HTTP 503.', profile: { name: 'Ana' } });
+  await notify({ kind: 'limit', phone: '+55', profile: {} });
+  const [error, limit] = calls.map((c) => JSON.parse(c.body).text);
+  assert.match(error, /could not answer Ana \(\+55\)\. The message is saved; reply by hand\. Error: HTTP 503\./);
+  assert.match(limit, /unknown lead \(\+55\) reached the daily reply limit/);
+});

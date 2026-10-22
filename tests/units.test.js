@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { shapeMessages, splitBubble, mentionedTimes } from '../src/messages.js';
 import { mergeProfile, score, missingFields } from '../src/lead.js';
-import { checkGates } from '../src/gates.js';
+import { checkGates, countConversationReply, conversationReplies } from '../src/gates.js';
 import { MessageBuffer } from '../src/buffer.js';
 import { validateDecision } from '../src/decision.js';
 import { defaultConfig as cfg } from '../src/config.js';
@@ -48,6 +49,21 @@ test('gates', () => {
   assert.equal(checkGates(conv, { ...cfg, canaryConversations: ['other'] }, NOW, 0).skip, 'not_canary');
   assert.equal(checkGates(conv, cfg, new Date('2026-10-21T03:00:00Z'), 0).defer, 'outside_reply_hours');
   assert.equal(checkGates(conv, cfg, NOW, 300).defer, 'daily_cap');
+});
+
+test('gates: one conversation has its own daily cap, reset when the day changes', () => {
+  const conv = { id: 'c', state: 'active', labels: [] };
+  for (let i = 0; i < cfg.conversationDailyCap; i++) countConversationReply(conv, '2026-10-20');
+  assert.equal(conversationReplies(conv, '2026-10-20'), cfg.conversationDailyCap);
+  assert.equal(checkGates(conv, cfg, NOW, 0).defer, 'conversation_daily_cap');
+  assert.equal(conversationReplies(conv, '2026-10-21'), 0);
+  countConversationReply(conv, '2026-10-21');
+  assert.deepEqual(conv.replies, { day: '2026-10-21', count: 1 });
+});
+
+test('the Docker build context leaves secrets out', () => {
+  const lines = fs.readFileSync(new URL('../.dockerignore', import.meta.url), 'utf8').split('\n');
+  for (const l of ['.env', '.env.*', '!.env.example', '*.pem', '.git', 'node_modules']) assert.ok(lines.includes(l), `.dockerignore misses ${l}`);
 });
 
 test('buffer: bursts become one turn, duplicate deliveries are ignored', async () => {

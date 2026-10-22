@@ -28,7 +28,7 @@ if (env.DATABASE_URL) {
 const sendText = whatsappSender({ token: need('WHATSAPP_TOKEN'), phoneNumberId: need('WHATSAPP_PHONE_NUMBER_ID'), version: env.WHATSAPP_GRAPH_VERSION || 'v21.0' });
 const notify = env.SLACK_WEBHOOK_URL
   ? slackNotifier({ webhookUrl: env.SLACK_WEBHOOK_URL })
-  : async (n) => console.log(n.kind === 'delivery' ? 'not delivered' : `handoff (${n.reason})`, n.phone, n.note || '');
+  : async (n) => console.log({ delivery: 'not delivered', error: 'agent failed', limit: 'daily limit' }[n.kind] || `handoff (${n.reason})`, n.phone, n.note || '');
 
 const agent = createAgent({
   cfg,
