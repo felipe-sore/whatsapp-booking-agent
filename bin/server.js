@@ -26,7 +26,9 @@ if (env.DATABASE_URL) {
 }
 
 const sendText = whatsappSender({ token: need('WHATSAPP_TOKEN'), phoneNumberId: need('WHATSAPP_PHONE_NUMBER_ID'), version: env.WHATSAPP_GRAPH_VERSION || 'v21.0' });
-const notify = env.SLACK_WEBHOOK_URL ? slackNotifier({ webhookUrl: env.SLACK_WEBHOOK_URL }) : async (n) => console.log('handoff', n.phone, n.reason);
+const notify = env.SLACK_WEBHOOK_URL
+  ? slackNotifier({ webhookUrl: env.SLACK_WEBHOOK_URL })
+  : async (n) => console.log(n.kind === 'delivery' ? 'not delivered' : `handoff (${n.reason})`, n.phone, n.note || '');
 
 const agent = createAgent({
   cfg,
@@ -38,7 +40,8 @@ const agent = createAgent({
   }),
   store,
   // Pace like a person: wait the "typing" time before each bubble.
-  send: async ({ phone, text, typingMs }) => { await sleep(typingMs); await sendText({ phone, text }); },
+  // Returns Meta's answer: the message id ties a later failed status to this send.
+  send: async ({ phone, text, typingMs }) => { await sleep(typingMs); return sendText({ phone, text }); },
   notify,
 });
 

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { setup, decision, known, PHONE, NOW } from './helpers.js';
+import { createAgent } from '../src/agent.js';
 
 const extract = (o) => ({ name: null, company: null, email: null, need: null, role: null, ...o });
 
@@ -217,7 +218,7 @@ test('send failure: a permanent error alerts the team with the reason', async ()
   const t = setup({ queue: [decision({ messages: ['Oi!'] })], send: failingSend(131047) });
   const r = await t.say('oi');
   assert.equal(r.delivery.action, 'permanent');
-  assert.equal(t.notified[0].reason, 'delivery_failed');
+  assert.equal(t.notified[0].kind, 'delivery');
   assert.match(t.notified[0].note, /outside the 24h window/);
 });
 
@@ -239,4 +240,67 @@ test('send failure midway: only what went out goes to the history', async () => 
   assert.equal(r.delivery.sent, 1);
   assert.deepEqual(t.agent.store.conversations.get('c1').history.filter((h) => h.role === 'agent').map((h) => h.text), ['Vamos marcar.']);
   assert.match(t.notified[0].note, /1 of 2 messages went out/);
+});
+
+test('send failure: a network error or a 503 is transient, never "Meta rejected"', async () => {
+  const net = setup({ queue: [decision({ messages: ['Oi!'] })], send: async () => { throw new TypeError('fetch failed'); } });
+  const r = await net.say('oi');
+  assert.equal(r.delivery.action, 'retry_fast');
+  assert.match(r.delivery.reason, /did not reach Meta \(fetch failed\)/);
+  assert.deepEqual(net.notified, []);
+  const busy = setup({ queue: [decision({ messages: ['Oi!'] })], send: async () => { throw Object.assign(new Error('HTTP 503'), { status: 503, code: null }); } });
+  assert.equal((await busy.say('oi')).delivery.action, 'retry_fast');
+});
+
+test('a failing team alert never loses the booking', async () => {
+  const t = await bookedReady();
+  const slot = t.agent.store.conversations.get('c1').offered[0];
+  const agent = createAgent({
+    brain: { decide: async () => decision({ action: 'book', slot_choice: slot.start }) },
+    calendar: t.calendar, store: t.agent.store, clock: () => NOW,
+    send: async () => { throw metaError(131026); }, notify: async () => { throw new Error('Slack 500'); },
+  });
+  const r = await agent.handle({ conversationId: 'c1', phone: PHONE, texts: ['o primeiro'] });
+  assert.equal(t.calendar.events.length, 1);
+  assert.equal(t.agent.store.conversations.get('c1').state, 'booked');
+  assert.ok(r.notes.some((n) => n.startsWith('notify_failed')));
+  assert.ok(t.agent.store.decisions.includes(r));
+});
+
+test('handoff that fails to send: one alert, and it says a person must reach out', async () => {
+  const t = setup({ queue: [new Error('model refused')], send: failingSend(131000) });
+  const r = await t.say('oi');
+  assert.equal(r.action, 'handoff');
+  assert.equal(t.notified.length, 1);
+  assert.equal(t.notified[0].kind, 'handoff');
+  assert.match(t.notified[0].note, /will not reply again: a person must reach out/);
+  assert.doesNotMatch(t.notified[0].note, /resumes/);
+});
+
+test('an offer that never reached the lead cannot be booked later', async () => {
+  const t = setup({ queue: [decision({ action: 'offer_slots', extracted: extract(known) })], send: failingSend(131000) });
+  const r = await t.say('quero marcar');
+  assert.deepEqual(r.bubbles, []);
+  assert.deepEqual(t.agent.store.conversations.get('c1').offered, []);
+});
+
+test('a failed status from the webhook: alert only when a person has to act', async () => {
+  let n = 0;
+  const t = await bookedReady({ send: async (m, sent) => { sent.push(m.text); return { messages: [{ id: `wamid.${++n}` }] }; } });
+  const slot = t.agent.store.conversations.get('c1').offered[0];
+  t.brain.decide = async () => decision({ action: 'book', slot_choice: slot.start });
+  await t.say('o primeiro');
+  const confirmation = `wamid.${n}`;
+  const offerId = 'wamid.1';
+
+  const quiet = await t.agent.deliveryFailed({ conversationId: 'c1', messageId: offerId, code: 131049 });
+  assert.equal(quiet.delivery.action, 'retry_fast');
+  assert.deepEqual(t.notified, []);
+
+  const loud = await t.agent.deliveryFailed({ conversationId: 'c1', messageId: confirmation, code: 131049 });
+  assert.match(loud.delivery.note, /calendar was already changed, but the lead was not told/);
+  assert.equal(t.notified.length, 1);
+  assert.equal(t.notified[0].kind, 'delivery');
+
+  assert.equal(await t.agent.deliveryFailed({ conversationId: 'nobody', messageId: 'x', code: 131026 }), null);
 });

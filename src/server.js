@@ -1,10 +1,10 @@
 import http from 'node:http';
-import { verifySignature, parseWebhook } from './adapters/whatsapp-cloud.js';
+import { verifySignature, parseEvents } from './adapters/whatsapp-cloud.js';
 import { MessageBuffer } from './buffer.js';
 
 // HTTP front door for the WhatsApp Cloud API.
 //   GET  /webhook                      Meta's subscription check (hub.challenge)
-//   POST /webhook                      inbound messages, signature verified on the raw body
+//   POST /webhook                      inbound messages and failed delivery statuses, signature verified on the raw body
 //   POST /conversations/:phone/human   a human took over: the agent goes silent (Bearer ADMIN_TOKEN)
 //   GET  /health
 // Meta expects a fast 200, so messages go to the buffer and are answered after a quiet period.
@@ -37,8 +37,12 @@ export function createServer({ agent, verifyToken, appSecret, adminToken, quietM
       if (req.method === 'POST' && url.pathname === '/webhook') {
         const raw = await readBody(req);
         if (!verifySignature(raw, req.headers['x-hub-signature-256'], appSecret)) return reply(401, 'bad signature');
-        for (const m of parseWebhook(JSON.parse(raw.toString('utf8')))) {
+        const { messages, failures } = parseEvents(JSON.parse(raw.toString('utf8')));
+        for (const m of messages) {
           buffer.push({ conversationId: m.phone, phone: m.phone, messageId: m.messageId, text: m.text });
+        }
+        for (const f of failures) {
+          agent.deliveryFailed({ conversationId: f.phone, ...f }).catch((err) => log.error(`status failed for ${f.phone}: ${err.message}`));
         }
         return reply(200, 'ok');
       }

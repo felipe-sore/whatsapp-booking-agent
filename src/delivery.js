@@ -38,8 +38,11 @@ const MAP = {
   10: { action: 'permanent', reason: 'parameter or permission error in the call' },
 };
 
+// Only a real number (or digits) is a Meta code; " ", true or "ECONNRESET" are not.
+const asCode = (code) => (typeof code === 'number' || (typeof code === 'string' && /^\d+$/.test(code)) ? Number(code) : NaN);
+
 export function classifyMetaError(code) {
-  const n = code === null || code === undefined || code === '' ? NaN : Number(code);
+  const n = asCode(code);
   if (Number.isFinite(n)) {
     if (MAP[n]) return { code: n, ...MAP[n] };
     // 133xxx = account or phone number registration problem.
@@ -54,16 +57,29 @@ export function classifyMetaError(code) {
   };
 }
 
+// Any error thrown while sending. A Meta code decides; without one, the HTTP
+// status does (429 and 5xx are transient); with neither it never reached Meta
+// (DNS, reset, timeout), which is transient too and keeps its own message.
+export function classifySendError(err = {}) {
+  if (Number.isFinite(asCode(err.code))) return classifyMetaError(err.code);
+  const status = Number(err.status);
+  if (status === 429) return { code: null, action: 'retry_fast', reason: 'Meta API rate limit reached (HTTP 429)' };
+  if (status >= 500) return { code: null, action: 'retry_fast', reason: `Meta server error (HTTP ${status})` };
+  if (status) return classifyMetaError(null);
+  return { code: null, action: 'retry_fast', reason: `the request did not reach Meta (${err.message || 'network error'})` };
+}
+
 export const isTransient = (cls) => cls.action === 'retry_fast' || cls.action === 'retry_slow';
 
 // Ready-to-read note for the team. The agent only answers inside a live
 // conversation, so it never retries on its own: a transient failure clears
 // when the lead writes again, a permanent one needs a person.
-export function deliveryFailureNote(cls, { sent = 0, total = 0, calendarChanged = false } = {}) {
+export function deliveryFailureNote(cls, { sent = 0, total = 0, calendarChanged = false, handedOver = false } = {}) {
   const parts = [`Not delivered: ${cls.reason}.`];
   if (total > 1) parts.push(`${sent} of ${total} messages went out.`);
   if (calendarChanged) parts.push('The calendar was already changed, but the lead was not told.');
-  if (cls.action === 'retry_slow') parts.push('Slow down sends from this number; do not retry in a loop.');
+  if (handedOver) parts.push('The agent has handed this conversation over and will not reply again: a person must reach out.');
+  else if (cls.action === 'retry_slow') parts.push('Slow down sends from this number; do not retry in a loop.');
   else if (isTransient(cls)) parts.push('Temporary: the conversation resumes when the lead writes again.');
   else parts.push('Decide how to proceed (reach out with an approved template, another channel, or lost).');
   return parts.join(' ');

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import { verifySignature, parseWebhook, whatsappSender } from '../src/adapters/whatsapp-cloud.js';
+import { verifySignature, parseWebhook, parseEvents, whatsappSender } from '../src/adapters/whatsapp-cloud.js';
 import { googleCalendar } from '../src/adapters/google-calendar.js';
 import { slackNotifier } from '../src/adapters/slack.js';
 import { PostgresStore } from '../src/adapters/postgres-store.js';
@@ -121,8 +121,18 @@ test('Postgres store: lead text never enters a SQL string', async () => {
 
 test('Slack: a failed send gets its own alert with the note', async () => {
   const { calls, fetchImpl } = recorder(() => ({ ok: true, status: 200, json: async () => ({}) }));
-  await slackNotifier({ webhookUrl: 'https://hooks.slack.com/x', fetchImpl })({ phone: '+55', reason: 'delivery_failed', note: 'Not delivered: x.', profile: { name: 'Ana' } });
+  await slackNotifier({ webhookUrl: 'https://hooks.slack.com/x', fetchImpl })({ kind: 'delivery', phone: '+55', note: 'Not delivered: x.', profile: { name: 'Ana' } });
   const text = JSON.parse(calls[0].body).text;
   assert.match(text, /not delivered: Ana \(\+55\)\. Not delivered: x\./);
   assert.doesNotMatch(text, /now silent/);
+});
+
+test('WhatsApp webhook: failed statuses are surfaced, the others ignored', () => {
+  const body = { entry: [{ changes: [{ value: { statuses: [
+    { id: 'wamid.1', status: 'delivered', recipient_id: '5521999990000' },
+    { id: 'wamid.2', status: 'failed', recipient_id: '5521999990000', errors: [{ code: 131026, title: 'Message undeliverable' }] },
+  ] } }] }] };
+  const { messages, failures } = parseEvents(body);
+  assert.deepEqual(messages, []);
+  assert.deepEqual(failures, [{ messageId: 'wamid.2', phone: '+5521999990000', code: 131026, detail: 'Message undeliverable' }]);
 });

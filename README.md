@@ -28,7 +28,7 @@ I build and run WhatsApp bots for real businesses (sales, scheduling, outbound).
 | Cancel needs an explicit confirmation | `src/agent.js` | cancel test |
 | A human writing in the conversation silences the agent for good | `src/gates.js` | gate and agent tests |
 | Model error, refusal or malformed output hands over to a human with a neutral message | `src/agent.js`, `src/decision.js` | failure tests |
-| A failed WhatsApp send is classified by its Meta error code (transient, low reputation, permanent, unknown); the team is alerted when a person has to act, including a booking the lead never heard about | `src/delivery.js`, `src/agent.js` | delivery tests |
+| A failed WhatsApp send is classified by its Meta error code (transient, low reputation, permanent, unknown), whether it fails on the call or later as a `failed` status on the webhook; the team is alerted when a person has to act, including a booking the lead never heard about, and a broken alert never loses the turn | `src/delivery.js`, `src/agent.js` | delivery tests |
 | Lead score and the audit trail of every field change are computed by code | `src/lead.js` | `tests/units.test.js` |
 | One question per turn, short bubbles, no long dashes | `src/messages.js` | evals |
 | Shadow mode (decide and log; no message, no calendar write, no team ping), canary conversations, reply hours, daily cap | `src/gates.js`, `src/agent.js` | gate tests |

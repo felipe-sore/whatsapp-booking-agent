@@ -24,7 +24,9 @@ const agent = createAgent({
   brain,
   calendar,
   send: async ({ text }) => { stdout.write(`\x1b[32m${agent.cfg.business.agentName}:\x1b[0m ${text}\n`); },
-  notify: async ({ reason }) => { stdout.write(`\x1b[33m[handoff to a human: ${reason}]\x1b[0m\n`); },
+  notify: async ({ kind, reason, note }) => {
+    stdout.write(`\x1b[33m[${kind === 'delivery' ? 'not delivered' : `handoff to a human: ${reason}`}${note ? `: ${note}` : ''}]\x1b[0m\n`);
+  },
 });
 
 stdout.write(`Simulator (${args.has('--claude') ? 'Claude' : 'scripted brain'}, ${locale}). Commands: /events, /log, /quit\n\n`);

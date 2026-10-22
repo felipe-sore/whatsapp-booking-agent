@@ -8,7 +8,7 @@ import { shapeMessages, typingDelayMs } from './messages.js';
 import { validateDecision } from './decision.js';
 import { systemPrompt, turnContext } from './prompt.js';
 import { MemoryStore } from './store.js';
-import { classifyMetaError, deliveryFailureNote, isTransient } from './delivery.js';
+import { classifyMetaError, classifySendError, deliveryFailureNote, isTransient } from './delivery.js';
 
 // The agent: the model proposes a decision, this file decides what happens.
 //
@@ -20,9 +20,10 @@ import { classifyMetaError, deliveryFailureNote, isTransient } from './delivery.
 //   - a human in the conversation, or a stop label, silences the agent for good
 //   - a model error or refusal hands over to a human with a neutral message
 //   - shadow mode touches nothing outside: no message, no calendar write
-//   - a failed send is classified by its Meta error code; the team is alerted
-//     when a person has to act (permanent error, or a calendar change the lead
-//     never heard about)
+//   - a failed send (at send time or later, as a webhook status) is classified
+//     by its Meta error code; the team is alerted when a person has to act
+//     (permanent error, a handoff that did not arrive, or a calendar change the
+//     lead never heard about). A failed alert never stops the turn from saving.
 //   - one turn at a time per conversation, so two bursts never book twice
 //     (in-process lock: run one instance per number)
 
@@ -80,10 +81,37 @@ export function createAgent({
 
   const handle = (turn) => serial(turn.conversationId, () => handleTurn(turn));
 
+  // Alerts are best effort: Slack being down must not lose the turn.
+  async function alert(record, payload) {
+    try { await notify(payload); } catch (err) { record.notes.push(`notify_failed: ${err.message}`); }
+  }
+
+  // Meta accepted a send, then reported it as failed through the status webhook.
+  function deliveryFailed({ conversationId, messageId, code, detail }) {
+    return serial(conversationId, async () => {
+      const conv = await store.get(conversationId);
+      if (!conv) return null;
+      const cls = classifyMetaError(code);
+      const calendarChanged = Boolean(messageId && (conv.calendarNoticeIds || []).includes(messageId));
+      const handedOver = conv.state === 'human';
+      const note = deliveryFailureNote(cls, { calendarChanged, handedOver });
+      const record = {
+        conversationId, at: clock().toISOString(), notes: [], outcome: 'delivery_failed',
+        delivery: { code: cls.code, action: cls.action, reason: cls.reason, messageId, detail, note },
+      };
+      if (calendarChanged || handedOver || !isTransient(cls)) {
+        await alert(record, { kind: 'delivery', conversationId, phone: conv.phone, note, profile: conv.profile });
+      }
+      await store.logDecision(record);
+      return record;
+    });
+  }
+
   async function handleTurn({ conversationId, phone, texts }) {
     const now = clock();
     const shadow = cfg.mode === 'shadow';
     const conv = await store.conversation(conversationId, phone);
+    const previousOffer = conv.offered;
     conv.history.push(...texts.map((text) => ({ role: 'lead', text, at: now.toISOString() })));
     const record = { conversationId, at: now.toISOString(), notes: [] };
 
@@ -202,8 +230,6 @@ export function createAgent({
       if (!bubbles.length || reason === 'model_failed') bubbles = [txt.handoff];
       return 'handoff';
     }
-    if (record.handoff && !shadow) await notify({ conversationId, phone, reason: record.handoff, profile: conv.profile });
-
     record.action = action;
     record.bubbles = bubbles;
 
@@ -217,28 +243,39 @@ export function createAgent({
       record.outcome = 'human_took_over';
     } else if (bubbles.length) {
       const sent = [];
+      const ids = [];
+      const calendarChanged = Boolean(record.booked || record.rescheduled || record.cancelled);
       try {
         for (const text of bubbles) {
-          await send({ conversationId, phone, text, typingMs: typingDelayMs(text) });
+          const res = await send({ conversationId, phone, text, typingMs: typingDelayMs(text) });
           sent.push(text);
+          if (res?.messages?.[0]?.id) ids.push(res.messages[0].id);
         }
         record.outcome = 'sent';
       } catch (err) {
         // Stop at the first failure: the rest would fail the same way, and a
         // half-delivered turn must not be logged as the lead having read it.
-        const cls = classifyMetaError(err.code);
-        const calendarChanged = Boolean(record.booked || record.rescheduled || record.cancelled);
-        const note = deliveryFailureNote(cls, { sent: sent.length, total: bubbles.length, calendarChanged });
+        const cls = classifySendError(err);
+        const note = deliveryFailureNote(cls, { sent: sent.length, total: bubbles.length, calendarChanged, handedOver: Boolean(record.handoff) });
         record.outcome = 'send_failed';
-        record.delivery = { code: cls.code, action: cls.action, reason: cls.reason, sent: sent.length, note };
-        if (calendarChanged || !isTransient(cls)) {
-          await notify({ conversationId, phone, reason: 'delivery_failed', note, profile: conv.profile });
-        }
+        record.delivery = { code: cls.code, action: cls.action, reason: cls.reason, sent: sent.length, error: err.message, note };
+        // An offer the lead never saw cannot be booked later.
+        if (action === 'offer_slots') conv.offered = previousOffer;
         bubbles = sent;
+        record.bubbles = sent;
+        if (!record.handoff && (calendarChanged || !isTransient(cls))) {
+          await alert(record, { kind: 'delivery', conversationId, phone, note, profile: conv.profile });
+        }
       }
+      // A failed status arriving later for one of these ids means the lead missed the change.
+      if (calendarChanged) conv.calendarNoticeIds = ids;
       if (sent.length) await store.countReply(dayKey(now, cfg));
     } else {
       record.outcome = 'silent';
+    }
+    // One alert per handoff, after the send, so it can say whether the handoff message arrived.
+    if (record.handoff && !shadow) {
+      await alert(record, { kind: 'handoff', conversationId, phone, reason: record.handoff, note: record.delivery?.note, profile: conv.profile });
     }
     conv.history.push(...bubbles.map((text) => ({ role: 'agent', text, at: now.toISOString() })));
     await store.save(conv);
@@ -246,5 +283,5 @@ export function createAgent({
     return record;
   }
 
-  return { handle, humanReplied, cfg, store, availability };
+  return { handle, humanReplied, deliveryFailed, cfg, store, availability };
 }

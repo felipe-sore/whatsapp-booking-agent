@@ -64,3 +64,13 @@ test('admin endpoint silences the agent; needs the token', async (tt) => {
   assert.equal((await fetch(url, { method: 'POST', headers: { authorization: 'Bearer ADM' } })).status, 200);
   assert.equal((await t.agent.store.get('+5521999990000')).state, 'human');
 });
+
+test('a failed status webhook reaches the agent', async (tt) => {
+  const t = await start();
+  tt.after(t.stop);
+  const calls = [];
+  t.agent.deliveryFailed = async (f) => { calls.push(f); return null; };
+  const body = JSON.stringify({ entry: [{ changes: [{ value: { statuses: [{ id: 'wamid.9', status: 'failed', recipient_id: '5521999990000', errors: [{ code: 131049, title: 'x' }] }] } }] }] });
+  assert.equal((await fetch(`${t.base}/webhook`, { method: 'POST', body, headers: { 'x-hub-signature-256': sign(body) } })).status, 200);
+  assert.deepEqual(calls, [{ conversationId: '+5521999990000', messageId: 'wamid.9', phone: '+5521999990000', code: 131049, detail: 'x' }]);
+});

@@ -12,12 +12,24 @@ export function verifySignature(rawBody, header, appSecret) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-// Inbound messages only; delivery statuses and other events are ignored.
+// Inbound messages, plus failed delivery statuses. Meta accepts most sends with
+// a 200 and reports the real outcome later as a status: a number that cannot
+// receive (131026) or a full inbox (131049) only shows up here. Other statuses
+// (sent, delivered, read) are ignored.
 export function parseWebhook(body) {
+  return parseEvents(body).messages;
+}
+
+export function parseEvents(body) {
   const out = [];
+  const failures = [];
   for (const entry of body?.entry || []) {
     for (const change of entry.changes || []) {
       const v = change.value || {};
+      for (const s of v.statuses || []) {
+        if (s.status !== 'failed') continue;
+        failures.push({ messageId: s.id, phone: `+${s.recipient_id}`, code: s.errors?.[0]?.code ?? null, detail: s.errors?.[0]?.title || '' });
+      }
       for (const m of v.messages || []) {
         let text = null;
         if (m.type === 'text') text = m.text?.body;
@@ -34,7 +46,7 @@ export function parseWebhook(body) {
       }
     }
   }
-  return out;
+  return { messages: out, failures };
 }
 
 export function whatsappSender({ token, phoneNumberId, version = 'v21.0', fetchImpl = (...a) => fetch(...a) }) {

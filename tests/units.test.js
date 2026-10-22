@@ -89,6 +89,9 @@ test('delivery: Meta error codes map to what to do next', () => {
   assert.deepEqual(classifyMetaError(999999), { code: 999999, action: 'unknown', reason: 'Meta rejected the send (code 999999)' });
   assert.equal(classifyMetaError(null).code, null);
   assert.equal(classifyMetaError(undefined).action, 'unknown');
+  assert.equal(classifyMetaError('  ').code, null);
+  assert.equal(classifyMetaError(true).code, null);
+  assert.equal(classifyMetaError('ECONNRESET').reason, 'Meta rejected the send without a code');
 });
 
 test('delivery: the note says what happened and what to do', () => {

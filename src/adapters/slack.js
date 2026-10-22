@@ -1,11 +1,13 @@
-// Team alerts through a Slack incoming webhook (one URL per channel):
-// handoffs, and failed sends that need a person.
+// Team alerts through a Slack incoming webhook (one URL per channel).
+// kind 'handoff': the agent went silent; kind 'delivery': a send failed and a
+// person has to act. Either can carry a note (what failed, what to do).
 export function slackNotifier({ webhookUrl, fetchImpl = (...a) => fetch(...a) }) {
-  return async function notify({ phone, reason, note, profile = {} }) {
+  return async function notify({ kind = 'handoff', phone, reason, note, profile = {} }) {
     const who = [profile.name, profile.company].filter(Boolean).join(', ') || 'unknown lead';
-    const text = reason === 'delivery_failed'
-      ? `:warning: WhatsApp message not delivered: ${who} (${phone}). ${note}`
+    const head = kind === 'delivery'
+      ? `:warning: WhatsApp message not delivered: ${who} (${phone}).`
       : `:raising_hand: WhatsApp handoff: ${who} (${phone}). Reason: ${reason}. The agent is now silent in this conversation.`;
+    const text = note ? `${head} ${note}` : head;
     const res = await fetchImpl(webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
