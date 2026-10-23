@@ -98,8 +98,6 @@ docker compose up -d        # agent + Postgres (schema in sql/schema.sql)
 | 2 | WhatsApp Cloud API webhook and sender (with Meta error triage), Google Calendar, Slack alerts, Postgres store, HTTP server, Docker | done, tested against mocked APIs |
 | 3 | Same evals against the real model | optional: `npm run eval -- --claude` with your own API key, or the manual workflow `evals (Claude)` with an `ANTHROPIC_API_KEY` secret |
 
-The code is new: what makes it trustworthy today is the test suite and the evals, not production traffic. The adapters are tested against the documented request and response shapes, not yet against live accounts.
-
 ## Tests
 
 `npm test`: slot engine (time zones, DST, gap, notice, holidays), message shaping, lead profile and score, gates, buffer, every booking rule in the agent with a stubbed model, Meta send-error triage, the Claude request contract, webhook signature and parsing, the HTTP server end to end, Google Calendar (signed JWT, privacy filter, all-day events), Slack and the Postgres store. Node 18, 20 and 22 on every push.
