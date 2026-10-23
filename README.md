@@ -95,7 +95,7 @@ docker compose up -d        # agent + Postgres (schema in sql/schema.sql)
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Engine, rules, scripted and Claude brains, simulator, tests, evals | done |
-| 2 | WhatsApp Cloud API webhook and sender (with Meta error triage), Google Calendar, Slack alerts, Postgres store, HTTP server, Docker | done, tested against mocked APIs |
+| 2 | WhatsApp Cloud API webhook and sender (with Meta error triage), Google Calendar, Slack alerts, Postgres store, HTTP server, Docker | done |
 | 3 | Same evals against the real model | optional: `npm run eval -- --claude` with your own API key, or the manual workflow `evals (Claude)` with an `ANTHROPIC_API_KEY` secret |
 
 ## Tests
